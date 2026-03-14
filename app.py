@@ -21,19 +21,12 @@ mode = st.radio("Select Mode:", ["Webcam (Local Only)", "Upload Video/Image"])
 # Background subtractor
 fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=True)
 
-# Motion count
+# Motion count and last notification time
 motion_count = 0
-
-# Streamlit display placeholder
-col1, col2 = st.columns([2, 1])
-FRAME_WINDOW = col1.empty()
-ORIGINAL_WINDOW = col1.empty()
+last_notification_time = datetime.min
 
 # Log file path
 log_file = "logs/motion_log.csv"
-
-# Time of last notification (for 2-minute delay)
-last_notification_time = datetime.min
 
 # --- Helper function ---
 def process_frame(frame):
@@ -46,14 +39,14 @@ def process_frame(frame):
 
     motion_detected = False
     for contour in contours:
-        if cv2.contourArea(contour) < 500:  # fixed minimum area
+        if cv2.contourArea(contour) < 500:
             continue
         motion_detected = True
         x, y, w, h = cv2.boundingRect(contour)
         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
     return frame, motion_detected
 
-# --- Function to log motion ---
+# --- Log motion function ---
 def log_motion():
     global motion_count, last_notification_time
     motion_count += 1
@@ -65,6 +58,7 @@ def log_motion():
 if mode == "Webcam (Local Only)":
     run = st.checkbox("Start Webcam (Local Only)")
     if run:
+        col1, col2 = st.columns([2, 1])
         cap = cv2.VideoCapture(0)
         while run:
             ret, frame = cap.read()
@@ -74,21 +68,26 @@ if mode == "Webcam (Local Only)":
 
             processed_frame, motion_detected = process_frame(frame)
 
-            # Display original frame
-            ORIGINAL_WINDOW.subheader("Original Feed")
-            ORIGINAL_WINDOW.image(frame, channels="BGR")
+            # Display original feed
+            col1.subheader("Original Feed")
+            col1.image(frame, channels="BGR")
 
-            # Display motion detection
-            FRAME_WINDOW.subheader("Motion Detection")
-            FRAME_WINDOW.image(processed_frame, channels="BGR")
+            # Motion detection feed
+            col1.subheader("Motion Detection")
+            col1.image(processed_frame, channels="BGR")
 
-            # Trigger notification only if 2 minutes have passed
+            # Trigger alert every 2 minutes
             if motion_detected and datetime.now() - last_notification_time > timedelta(minutes=2):
                 log_motion()
                 st.sidebar.write(f"⚠️ Motion detected! Total: {motion_count}")
-                # Save snapshot
                 filename = f"images/motion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                 cv2.imwrite(filename, processed_frame)
+
+            # Motion log
+            col2.subheader("Motion Log")
+            if os.path.exists(log_file):
+                logs_df = pd.read_csv(log_file)
+                col2.dataframe(logs_df.tail(10))
 
         cap.release()
 
@@ -101,12 +100,15 @@ else:
             frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
             processed_frame, motion_detected = process_frame(frame)
 
-            # Show original and processed image
-            col1.subheader("Original Image")
-            col1.image(frame, channels="BGR")
-            col1.subheader("Motion Detection")
-            col1.image(processed_frame, channels="BGR")
+            # Show original image once
+            st.subheader("Original Image")
+            st.image(frame, channels="BGR")
 
+            # Show motion detection
+            st.subheader("Motion Detection")
+            st.image(processed_frame, channels="BGR")
+
+            # Trigger alert only if 2 minutes passed
             if motion_detected and datetime.now() - last_notification_time > timedelta(minutes=2):
                 log_motion()
                 st.write(f"⚠️ Motion detected! Total: {motion_count}")
@@ -119,22 +121,24 @@ else:
                 f.write(uploaded_file.read())
 
             cap = cv2.VideoCapture(tfile)
+            st.subheader("Original Video Uploaded (Preview)")
+            st.video(tfile)  # show original video only once
+
+            col1, col2 = st.columns([2, 1])
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
                     break
                 processed_frame, motion_detected = process_frame(frame)
 
-                # Display original and processed frames
-                col1.subheader("Original Video Feed")
-                col1.image(frame, channels="BGR")
+                # Only show motion detection frames
                 col1.subheader("Motion Detection")
                 col1.image(processed_frame, channels="BGR")
 
-                # Trigger notification only every 2 minutes
+                # Trigger alert every 2 minutes
                 if motion_detected and datetime.now() - last_notification_time > timedelta(minutes=2):
                     log_motion()
-                    st.write(f"⚠️ Motion detected! Total: {motion_count}")
+                    st.sidebar.write(f"⚠️ Motion detected! Total: {motion_count}")
                     filename = f"images/motion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                     cv2.imwrite(filename, processed_frame)
 
