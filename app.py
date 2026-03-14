@@ -1,21 +1,39 @@
+# app.py
 import streamlit as st
 import cv2
 import numpy as np
 from datetime import datetime
 from PIL import Image
+import os
+import pandas as pd
 
-st.set_page_config(page_title="Motion Detection & Alert System", layout="wide")
+# --- Setup ---
+st.set_page_config(page_title="🛡️ Motion Detection & Alert System", layout="wide")
 st.title("🛡️ Motion Detection & Alert System")
 
-mode = st.radio("Select Mode:", ["Webcam (Local Only)", "Upload Video/Image (Cloud Compatible)"])
+# Create folders if not exist
+os.makedirs("images", exist_ok=True)
+os.makedirs("logs", exist_ok=True)
 
-FRAME_WINDOW = st.image([])
+# Sidebar settings
+st.sidebar.title("Settings")
+mode = st.sidebar.radio("Select Mode:", ["Webcam (Local Only)", "Upload Video/Image"])
+min_contour_area = st.sidebar.slider("Min Contour Area", 100, 5000, 500)
+show_mask = st.sidebar.checkbox("Show Threshold Mask")
 
 # Background subtractor
 fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=True)
-min_contour_area = 500
+
+# Motion count
 motion_count = 0
 
+# Streamlit display placeholder
+FRAME_WINDOW = st.image([])
+
+# Log file path
+log_file = "logs/motion_log.csv"
+
+# --- Helper function ---
 def process_frame(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (21, 21), 0)
@@ -31,47 +49,88 @@ def process_frame(frame):
         motion_detected = True
         x, y, w, h = cv2.boundingRect(contour)
         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
-    return frame, motion_detected
+    return frame, motion_detected, thresh
 
+# --- Webcam Mode ---
 if mode == "Webcam (Local Only)":
     run = st.checkbox("Start Webcam (Local Only)")
     if run:
         cap = cv2.VideoCapture(0)
+        col1, col2 = st.columns([2, 1])
         while run:
             ret, frame = cap.read()
             if not ret:
                 st.warning("Failed to read from webcam")
                 break
-            frame, motion_detected = process_frame(frame)
+
+            frame, motion_detected, thresh = process_frame(frame)
+
+            # Save snapshot if motion detected
             if motion_detected:
                 motion_count += 1
-                st.write(f"⚠️ Motion detected at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            FRAME_WINDOW.image(frame, channels="BGR")
+                filename = f"images/motion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                cv2.imwrite(filename, frame)
+                st.sidebar.write(f"⚠️ Motion detected! Total: {motion_count}")
+
+                # Append to log CSV
+                df = pd.DataFrame({"time": [datetime.now()], "motion_count": [motion_count]})
+                df.to_csv(log_file, mode="a", index=False, header=not os.path.exists(log_file))
+
+            # Display frames
+            col1.subheader("Live Feed")
+            col1.image(frame, channels="BGR")
+            if show_mask:
+                col1.subheader("Threshold Mask")
+                col1.image(thresh, channels="GRAY")
+
+            # Motion log
+            col2.subheader("Motion Log")
+            if os.path.exists(log_file):
+                logs_df = pd.read_csv(log_file)
+                col2.dataframe(logs_df.tail(10))
+
         cap.release()
 
-else:  # Upload mode for Cloud
+# --- Upload Mode (Cloud Compatible) ---
+else:
     uploaded_file = st.file_uploader("Upload Image or Video", type=["jpg","png","mp4"])
     if uploaded_file:
         if uploaded_file.type.startswith("image"):
             image = Image.open(uploaded_file)
             frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-            frame, motion_detected = process_frame(frame)
+            frame, motion_detected, thresh = process_frame(frame)
+
             if motion_detected:
                 motion_count += 1
-                st.write(f"⚠️ Motion detected at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            FRAME_WINDOW.image(frame, channels="BGR")
-        else:  # Video
+                filename = f"images/motion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                cv2.imwrite(filename, frame)
+                st.write(f"⚠️ Motion detected! Total: {motion_count}")
+                df = pd.DataFrame({"time": [datetime.now()], "motion_count": [motion_count]})
+                df.to_csv(log_file, mode="a", index=False, header=not os.path.exists(log_file))
+
+            st.image(frame, channels="BGR")
+            if show_mask:
+                st.image(thresh, channels="GRAY")
+
+        else:  # Video upload
             tfile = "temp_video.mp4"
             with open(tfile, "wb") as f:
                 f.write(uploaded_file.read())
+
             cap = cv2.VideoCapture(tfile)
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
                     break
-                frame, motion_detected = process_frame(frame)
+                frame, motion_detected, thresh = process_frame(frame)
                 if motion_detected:
                     motion_count += 1
-                    st.write(f"⚠️ Motion detected at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                FRAME_WINDOW.image(frame, channels="BGR")
+                    filename = f"images/motion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                    cv2.imwrite(filename, frame)
+                    st.write(f"⚠️ Motion detected! Total: {motion_count}")
+                    df = pd.DataFrame({"time": [datetime.now()], "motion_count": [motion_count]})
+                    df.to_csv(log_file, mode="a", index=False, header=not os.path.exists(log_file))
+                st.image(frame, channels="BGR")
+                if show_mask:
+                    st.image(thresh, channels="GRAY")
             cap.release()
