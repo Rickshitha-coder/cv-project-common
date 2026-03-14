@@ -15,11 +15,8 @@ st.title("🛡️ Motion Detection & Alert System")
 os.makedirs("images", exist_ok=True)
 os.makedirs("logs", exist_ok=True)
 
-# Sidebar settings
-st.sidebar.title("Settings")
-mode = st.sidebar.radio("Select Mode:", ["Webcam (Local Only)", "Upload Video/Image"])
-min_contour_area = st.sidebar.slider("Min Contour Area", 100, 5000, 500)
-show_mask = st.sidebar.checkbox("Show Threshold Mask")
+# Mode selection
+mode = st.radio("Select Mode:", ["Webcam (Local Only)", "Upload Video/Image"])
 
 # Background subtractor
 fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=50, detectShadows=True)
@@ -44,12 +41,12 @@ def process_frame(frame):
 
     motion_detected = False
     for contour in contours:
-        if cv2.contourArea(contour) < min_contour_area:
+        if cv2.contourArea(contour) < 500:  # fixed minimum area
             continue
         motion_detected = True
         x, y, w, h = cv2.boundingRect(contour)
         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
-    return frame, motion_detected, thresh
+    return frame, motion_detected
 
 # --- Webcam Mode ---
 if mode == "Webcam (Local Only)":
@@ -63,9 +60,8 @@ if mode == "Webcam (Local Only)":
                 st.warning("Failed to read from webcam")
                 break
 
-            frame, motion_detected, thresh = process_frame(frame)
+            frame, motion_detected = process_frame(frame)
 
-            # Save snapshot if motion detected
             if motion_detected:
                 motion_count += 1
                 filename = f"images/motion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
@@ -79,9 +75,6 @@ if mode == "Webcam (Local Only)":
             # Display frames
             col1.subheader("Live Feed")
             col1.image(frame, channels="BGR")
-            if show_mask:
-                col1.subheader("Threshold Mask")
-                col1.image(thresh, channels="GRAY")
 
             # Motion log
             col2.subheader("Motion Log")
@@ -91,14 +84,14 @@ if mode == "Webcam (Local Only)":
 
         cap.release()
 
-# --- Upload Mode (Cloud Compatible) ---
+# --- Upload Mode ---
 else:
     uploaded_file = st.file_uploader("Upload Image or Video", type=["jpg","png","mp4"])
     if uploaded_file:
         if uploaded_file.type.startswith("image"):
             image = Image.open(uploaded_file)
             frame = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-            frame, motion_detected, thresh = process_frame(frame)
+            frame, motion_detected = process_frame(frame)
 
             if motion_detected:
                 motion_count += 1
@@ -109,8 +102,6 @@ else:
                 df.to_csv(log_file, mode="a", index=False, header=not os.path.exists(log_file))
 
             st.image(frame, channels="BGR")
-            if show_mask:
-                st.image(thresh, channels="GRAY")
 
         else:  # Video upload
             tfile = "temp_video.mp4"
@@ -122,7 +113,7 @@ else:
                 ret, frame = cap.read()
                 if not ret:
                     break
-                frame, motion_detected, thresh = process_frame(frame)
+                frame, motion_detected = process_frame(frame)
                 if motion_detected:
                     motion_count += 1
                     filename = f"images/motion_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
@@ -131,6 +122,4 @@ else:
                     df = pd.DataFrame({"time": [datetime.now()], "motion_count": [motion_count]})
                     df.to_csv(log_file, mode="a", index=False, header=not os.path.exists(log_file))
                 st.image(frame, channels="BGR")
-                if show_mask:
-                    st.image(thresh, channels="GRAY")
             cap.release()
